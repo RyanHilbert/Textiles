@@ -1,0 +1,247 @@
+AWSTemplateFormatVersion: 2010-09-09
+Transform: AWS::Serverless-2016-10-31
+Resources:
+  UserPool:
+    Type: AWS::Cognito::UserPool
+
+
+  Role:
+    Type: AWS::IAM::Role
+    Properties:
+      Policies:
+      - PolicyName: !Ref AWS::StackName
+        PolicyDocument:
+          Version: 2012-10-17
+          Statement:
+            Effect: Allow
+            Resource: !Sub ${Table.Arn}*
+            Action:
+            - dynamodb:Query
+            - dynamodb:PutItem
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          Effect: Allow
+          Action: sts:AssumeRole
+          Principal:
+            Service:
+              !Sub apigateway.${AWS::URLSuffix}
+
+
+  Table:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+      - AttributeName: u #user
+        AttributeType: S
+      - AttributeName: t #timestamp
+        AttributeType: N
+      - AttributeName: r #reply
+        AttributeType: N
+      - AttributeName: z #zero - constant
+        AttributeType: N
+      KeySchema:
+      - AttributeName: u
+        KeyType: HASH
+      - AttributeName: t
+        KeyType: RANGE
+      GlobalSecondaryIndexes:
+      - IndexName: gsi
+        Projection:
+          ProjectionType: ALL
+        KeySchema:
+        - AttributeName: r
+          KeyType: HASH
+        - AttributeName: t
+          KeyType: RANGE
+      - IndexName: all
+        Projection:
+          ProjectionType: ALL
+        KeySchema:
+        - AttributeName: z
+          KeyType: HASH
+        - AttributeName: t
+          KeyType: RANGE
+
+
+  Api:
+    Type: AWS::Serverless::Api
+    Properties:
+      Name: !Ref AWS::StackName
+      StageName: !Ref AWS::StackName
+      Auth:
+        #DefaultAuthorizer: Cognito
+        Authorizers:
+          Cognito:
+            UserPoolArn:
+              !GetAtt UserPool.Arn
+      DefinitionBody:
+        openapi: 3.0.0
+        info:
+          title: !Ref AWS::StackName
+          version: 1.0.0
+        paths:
+
+
+          /api:
+            get:
+              responses: &responses
+                "200":
+                  description: OK
+                  headers:
+                    Content-Type:
+                      schema:
+                        type: string
+                "303":
+                  description: See Other
+                  headers:
+                    Location:
+                      schema:
+                        type: string
+              x-amazon-apigateway-integration: &integration
+                type: aws
+                httpMethod: POST
+                credentials: !GetAtt Role.Arn
+                uri: !Sub arn:aws:apigateway:${AWS::Region}:dynamodb:action/Query
+                passthroughBehavior: when_no_templates
+                responses:
+                  "200":
+                    statusCode: 200
+                requestTemplates:
+                  application/json: !Sub |-
+                    {
+                      "TableName":"${Table}",
+                      "IndexName":"all",
+                      "ScanIndexForward": false,
+                      "KeyConditionExpression":"z = :z",
+                      "ExpressionAttributeValues":{":z":{"N":"0"}}
+                    }
+
+            post: &post
+              responses: *responses
+              x-amazon-apigateway-integration:
+                <<: *integration
+                uri: !Sub arn:aws:apigateway:${AWS::Region}:dynamodb:action/PutItem
+                responses:
+                  "200":
+                    statusCode: 303
+                    responseParameters:
+                      method.response.header.Location: "'#'"
+                requestTemplates:
+                  application/x-www-form-urlencoded: !Sub |-
+                    {
+                      "TableName":"${Table}",
+                      "Item":{
+                        "t":{"N":"$context.requestTimeEpoch"},
+                      #foreach( $arg in $input.body.split('&') )
+                       #set( $arr = $arg.split('=') )
+                       #set( $key = $util.urlDecode($arg.split('=')[0]) )
+                       #set( $val = $util.urlDecode($arg.split('=')[1]) )
+                       #if( $key == 'u' )
+                        "u":{"S":"$val"},
+                       #elseif( $key == 'm' )
+                        "m":{"S":"$val"},
+                       #elseif( $key == 'r' )
+                        #if( $val == '0' )
+                        "r":{"N":"$context.requestTimeEpoch"},
+                        #else
+                        "r":{"N":"$val"},
+                        #end
+                       #end
+                      #end
+                        "z":{"N":"0"}
+                      }
+                    }
+
+          /:
+            post: *post
+            get:
+              responses: *responses
+              x-amazon-apigateway-integration:
+                <<: *integration
+                responses:
+                  "200":
+                    statusCode: 200
+                    responseParameters:
+                      method.response.header.Content-Type: "'text/html'"
+                    responseTemplates:
+                      application/json: !Sub |-
+                        <!DOCTYPE html>
+                        <title>${AWS::StackName}</title>
+                        <form method=post>
+                        <label>Message:<br><textarea name=m></textarea></label>
+                        <br>
+                        <label>Username: <input name=u></label>
+                        <br>
+                        <label><input type=radio name=r value=0 checked>New Thread</label>
+                        <br>
+                        Reply to:
+                        #foreach($item in $input.path('$.Items'))
+                        <label>
+                          <br>
+                          <input type=radio name=r value=$item.r.N>
+                          <a href=/${AWS::StackName}/r/$item.r.N>$item.r.N</a>
+                          |
+                          <a href=/${AWS::StackName}/u/$item.u.S>$item.u.S</a>
+                          -
+                          $item.m.S
+                        </label>
+                        #end
+                        </form>
+
+          /api/u/{u}:
+            get:
+              responses: *responses
+              x-amazon-apigateway-integration: &u-integration
+                <<: *integration
+                requestTemplates:
+                  application/json: !Sub |-
+                    {
+                      "TableName":"${Table}",
+                      "ScanIndexForward":false,
+                      "KeyConditionExpression":"u = :u",
+                      "ExpressionAttributeValues":{":u":{"S":"$input.params('u')"}}
+                    }
+          /u/{u}:
+            get:
+              responses: *responses
+              x-amazon-apigateway-integration:
+                <<: *u-integration
+                responses: &response
+                  "200":
+                    statusCode: 200
+                    responseParameters:
+                      method.response.header.Content-Type: "'text/html'"
+                    responseTemplates:
+                      application/json: !Sub |-
+                        <!DOCTYPE html>
+                        <title>${AWS::StackName}</title>
+                        #foreach( $item in $input.path('$.Items') )
+                        <a href=/${AWS::StackName}/r/$item.r.N>$item.r.N</a>
+                        |
+                        <a href=/${AWS::StackName}/u/$item.u.S>$item.u.S</a>
+                        -
+                        $item.m.S
+                        <br>
+                        #end
+
+          /api/r/{r}:
+            get:
+              responses: *responses
+              x-amazon-apigateway-integration: &r-integration
+                <<: *integration
+                requestTemplates:
+                  application/json: !Sub |-
+                    {
+                      "TableName":"${Table}",
+                      "IndexName":"gsi",
+                      "KeyConditionExpression":"r = :r",
+                      "ExpressionAttributeValues":{":r":{"N":"$input.params('r')"}}
+                    }
+          /r/{r}:
+            get:
+              responses: *responses
+              x-amazon-apigateway-integration:
+                <<: *r-integration
+                responses: *response
