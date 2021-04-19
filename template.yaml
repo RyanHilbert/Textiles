@@ -4,7 +4,6 @@ Resources:
   UserPool:
     Type: AWS::Cognito::UserPool
 
-
   Role:
     Type: AWS::IAM::Role
     Properties:
@@ -26,7 +25,6 @@ Resources:
           Principal:
             Service:
               !Sub apigateway.${AWS::URLSuffix}
-
 
   Table:
     Type: AWS::DynamoDB::Table
@@ -64,7 +62,6 @@ Resources:
         - AttributeName: t
           KeyType: RANGE
 
-
   Api:
     Type: AWS::Serverless::Api
     Properties:
@@ -82,7 +79,6 @@ Resources:
           title: !Ref AWS::StackName
           version: 1.0.0
         paths:
-
 
           /api:
             get:
