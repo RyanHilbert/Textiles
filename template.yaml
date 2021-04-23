@@ -181,7 +181,7 @@ Resources:
                           |
                           <a href=/${AWS::StackName}/u/$item.u.S>$item.u.S</a>
                           -
-                          $item.m.S.replace('&','&amp;').replace('<','&lt;').replace('>','&gt;').replace('"','&quot;').replace("'",'&apos;')
+                          $item.m.S.replace('&','&amp;').replace('<','&lt;')
                         </label>
                         #end
                         </form>
@@ -218,7 +218,7 @@ Resources:
                         |
                         <a href=/${AWS::StackName}/u/$item.u.S>$item.u.S</a>
                         -
-                        $item.m.S.replace('&','&amp;').replace('<','&lt;').replace('>','&gt;').replace('"','&quot;').replace("'",'&apos;')
+                        $item.m.S.replace('&','&amp;').replace('<','&lt;')
                         <br>
                         #end
 
